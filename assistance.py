@@ -1,173 +1,156 @@
+from datetime import datetime
 import speech_recognition as sr
 import pyttsx3
-import datetime
-import wikipedia
 import webbrowser
-import os
-import time
-import subprocess
-from ecapture import ecapture as ec
+import wikipedia
 import wolframalpha
-import json
-import requests
 
+# Speech engine initialisation
+engine = pyttsx3.init()
+voices = engine.getProperty('voices')
+engine.setProperty('voice', voices[0].id) # 0 = male, 1 = female
+activationWord = 'computer' # Single word
 
-print('Loading your AI personal assistant - Veronica')
+# Configure browser
+# Set the path
+chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+# Register the browser
+webbrowser.register('chrome', None, 
+                    webbrowser.BackgroundBrowser(chrome_path))
 
-engine=pyttsx3.init('sapi5')
-voices=engine.getProperty('voices')
-engine.setProperty('voice','voices[1].id')
+# Wolfram Alpha client
+appId = '5R49J7-J888YX9J2V'
+wolframClient = wolframalpha.Client(appId)
 
-
-def speak(text):
+def speak(text, rate = 120):
+    engine.setProperty('rate', rate) 
     engine.say(text)
     engine.runAndWait()
 
-def wishMe():
-    hour=datetime.datetime.now().hour
-    if hour>=0 and hour<12:
-        speak("Hello,Good Morning")
-        print("Hello,Good Morning")
-    elif hour>=12 and hour<18:
-        speak("Hello,Good Afternoon")
-        print("Hello,Good Afternoon")
-    else:
-        speak("Hello,Good Evening")
-        print("Hello,Good Evening")
+def parseCommand():
+    listener = sr.Recognizer()
+    print('Listening for a command')
 
-def takeCommand():
-    r=sr.Recognizer()
     with sr.Microphone() as source:
-        print("Listening...")
-        audio=r.listen(source)
+        listener.pause_threshold = 2
+        input_speech = listener.listen(source)
 
-        try:
-            statement=r.recognize_google(audio,language='en-in')
-            print(f"user said:{statement}\n")
+    try:
+        print('Recognizing speech...')
+        query = listener.recognize_google(input_speech, language='en_gb')
+        print(f'The input speech was: {query}')
 
-        except Exception as e:
-            speak("Pardon me, please say that again")
-            return "None"
-        return statement
+    except Exception as exception:
+        print('I did not quite catch that')
+        speak('I did not quite catch that')
+        print(exception)
 
-speak("Loading your AI personal assistant G-One")
-wishMe()
+        return 'None'
 
+    return query
 
-if name=='main':
+def search_wikipedia(keyword=''):
+    searchResults = wikipedia.search(keyword)
+    if not searchResults:
+        return 'No result received'
+    try: 
+        wikiPage = wikipedia.page(searchResults[0]) 
+    except wikipedia.DisambiguationError as error:
+        wikiPage = wikipedia.page(error.options[0])
+    print(wikiPage.title)
+    wikiSummary = str(wikiPage.summary)
+    return wikiSummary
 
+def listOrDict(var):
+    if isinstance(var, list):
+        return var[0]['plaintext']
+    else:
+        return var['plaintext']
+
+def search_wolframalpha(keyword=''):
+    response = wolframClient.query(keyword)
+  
+    # @success: Wolfram Alpha was able to resolve the query
+    # @numpods: Number of results returned
+    # pod: List of results. This can also contain subpods
+
+    # Query not resolved
+    if response['@success'] == 'false':
+        speak('I could not compute')
+    # Query resolved
+    else: 
+        result = ''
+        # Question
+        pod0 = response['pod'][0]
+        # May contain answer (Has highest confidence value) 
+        # if it's primary or has the title of result or definition, then it's the official result
+        pod1 = response['pod'][1]
+        if (('result') in pod1['@title'].lower()) or (pod1.get('@primary', 'false') == 'true') or ('definition' in pod1['@title'].lower()):
+            # Get the result
+            result = listOrDict(pod1['subpod'])
+            # Remove bracketed section
+            return result.split('(')[0]
+        else:
+            # Get the interpretation from pod0
+            question = listOrDict(pod0['subpod'])
+            # Remove bracketed section
+            question = question.split('(')[0]
+            # Could search wiki instead here? 
+            return question
+
+# Main loop
+if __name__ == '__main__': 
+    speak('All systems nominal.', 120)
 
     while True:
-        speak("Tell me how can I help you now?")
-        statement = takeCommand().lower()
-        if statement==0:
-            continue
+        # Parse as a list
+        query = parseCommand().lower().split()
 
-        if "good bye" in statement or "ok bye" in statement or "stop" in statement:
-            speak('your personal assistant Veronica is shutting down,Good bye')
-            print('your personal assistant Veronica is shutting down,Good bye')
-            break
+        if query[0] == activationWord:
+            query.pop(0)
 
+            # Set commands
+            if query[0] == 'say':
+                if 'hello' in query:
+                    speak('Greetings, all!')
+                else:
+                    query.pop(0) # Remove 'say'
+                    speech = ' '.join(query) 
+                    speak(speech)
 
+            # Navigation
+            if query[0] == 'go' and query[1] == 'to':
+                speak('Opening... ')
+                # Assume the structure is activation word + go to, so let's remove the next two words
+                query = ' '.join(query[2:])
+                webbrowser.get('chrome').open_new(query)
 
-        if 'wikipedia' in statement:
-            speak('Searching Wikipedia...')
-            statement =statement.replace("wikipedia", "")
-            results = wikipedia.summary(statement, sentences=3)
-            speak("According to Wikipedia")
-            print(results)
-            speak(results)
+            # Wikipedia
+            if query[0] == 'wikipedia':
+                query = ' '.join(query[1:])
+                speak('Querying the universal databank')
+                speak(search_wikipedia(query))
 
-        elif 'open youtube' in statement:
-            webbrowser.open_new_tab("https://www.youtube.com")
-            speak("youtube is open now")
-            time.sleep(5)
+            # Wolfram Alpha
+            if query[0] == 'compute' or query[0] == 'computer':
+                query = ' '.join(query[1:])
+                try:
+                    result = search_wolframalpha(query)
+                    speak(result)
+                except:
+                    speak('Unable to compute')
 
-        elif 'open google' in statement:
-            webbrowser.open_new_tab("https://www.google.com")
-            speak("Google chrome is open now")
-            time.sleep(5)
+            # Note taking
+            if query[0] == 'log':
+                speak('Ready to record your note')
+                newNote = parseCommand().lower()
+                now = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+                with open('note_%s.txt' % now, 'w') as newFile:
+                    newFile.write(now)
+                    newFile.write(' ')
+                    newFile.write(newNote)
+                speak('Note written')
 
-        elif 'open gmail' in statement:
-            webbrowser.open_new_tab("gmail.com")
-            speak("Google Mail open now")
-            time.sleep(5)
-
-        elif "weather" in statement:
-            api_key="8ef61edcf1c576d65d836254e11ea420"
-            base_url="https://api.openweathermap.org/data/2.5/weather?"
-            speak("whats the city name")
-            city_name=takeCommand()
-            complete_url=base_url+"appid="+api_key+"&q="+city_name
-            response = requests.get(complete_url)
-            x=response.json()
-            if x["cod"]!="404":
-                y=x["main"]
-                current_temperature = y["temp"]
-                current_humidiy = y["humidity"]
-                z = x["weather"]
-                weather_description = z[0]["description"]
-                speak(" Temperature in kelvin unit is " +
-                      str(current_temperature) +
-                      "\n humidity in percentage is " +
-                      str(current_humidiy) +
-                      "\n description  " +
-                      str(weather_description))
-                print(" Temperature in kelvin unit = " +
-                      str(current_temperature) +
-                      "\n humidity (in percentage) = " +
-                      str(current_humidiy) +
-                      "\n description = " +
-                      str(weather_description))
-
-            else:
-                speak(" City Not Found ")
-
-
-
-        elif 'time' in statement:
-            strTime=datetime.datetime.now().strftime("%H:%M:%S")
-            speak(f"the time is {strTime}")
-        elif 'who are you' in statement or 'what can you do' in statement:
-            speak('I am Veronica version 1 point O your personal assistant. I am programmed to minor tasks like'
-                  'opening youtube,google chrome,gmail and stackoverflow ,predict time,take a photo,search wikipedia,predict weather' 
-                  'in different cities , get top headline news from times of india and you can ask me computational or geographical questions too!')
-
-
-        elif "who made you" in statement or "who created you" in statement or "who discovered you" in statement:
-            speak("I was built by Okuhle Ntloyiya")
-            print("I was built by Okuhle Ntloyiya")
-
-        elif "open stackoverflow" in statement:
-            webbrowser.open_new_tab("https://stackoverflow.com/login")
-            speak("Here is stackoverflow")
-
-        elif 'news' in statement:
-            news = webbrowser.open_new_tab("https://timesofindia.indiatimes.com/home/headlines")
-            speak('Here are some headlines from the Times of India,Happy reading')
-            time.sleep(6)
-
-        elif "camera" in statement or "take a photo" in statement:
-            ec.capture(0,"robo camera","img.jpg")
-
-        elif 'search'  in statement:
-            statement = statement.replace("search", "")
-            webbrowser.open_new_tab(statement)
-            time.sleep(5)
-
-        elif 'ask' in statement:
-            speak('I can answer to computational and geographical questions and what question do you want to ask now')
-            question=takeCommand()
-            app_id="R2K75H-7ELALHR35X"
-            client = wolframalpha.Client('R2K75H-7ELALHR35X')
-            res = client.query(question)
-            answer = next(res.results).text
-            speak(answer)
-            print(answer)
-
-
-        elif "log off" in statement or "sign out" in statement:
-            speak("Ok , your pc will log off in 10 sec make sure you exit from all applications")
-            subprocess.call(["shutdown", "/l"])
-
-time.sleep(3)     
+            if query[0] == 'exit':
+                speak('Goodbye')
+                break
